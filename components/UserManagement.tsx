@@ -180,7 +180,7 @@ const RoleManager: React.FC = () => {
                             ) : (
                                 <div className="font-medium text-app-text flex items-center gap-2">
                                     {role.name} 
-                                    {role.isSystem && <span className="bg-gray-200 text-gray-700 text-[10px] px-1.5 py-0.5 rounded-full uppercase tracking-wide">System</span>}
+                                    {role.isSystem && <span className="bg-gray-200 text-gray-700 text-[10px] px-1.5 py-0.5 rounded-full uppercase tracking-wide flex items-center"><LockIcon className="w-3 h-3 mr-0.5"/>System</span>}
                                 </div>
                             )}
                             <div className="flex items-center space-x-2">
@@ -454,18 +454,24 @@ const UserManagement: React.FC = () => {
             <div className="mt-8 border-t pt-6">
                 <h2 className="text-lg font-bold mb-4">กำหนดสิทธิ์ (Permissions)</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {state.roles.filter(role => !role.isSystem).map(role => (
-                        <div key={role.id} className="border rounded-lg p-4 bg-white shadow-sm hover:shadow-md transition-shadow">
-                            <h3 className="font-bold text-primary mb-3 border-b pb-2">{role.name}</h3>
+                    {/* Show ALL roles, including System roles, but disable editing for them */}
+                    {state.roles.map(role => (
+                        <div key={role.id} className={`border rounded-lg p-4 shadow-sm transition-shadow ${role.isSystem ? 'bg-gray-50 border-gray-200' : 'bg-white hover:shadow-md'}`}>
+                            <h3 className="font-bold text-primary mb-3 border-b pb-2 flex justify-between items-center">
+                                {role.name}
+                                {role.isSystem && <LockIcon className="w-4 h-4 text-gray-400" title="System Role (Read-Only)" />}
+                            </h3>
                             <div className="space-y-2">
                                 {Object.values(Permission).map(permission => (
-                                    <label key={permission} className="flex items-center cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                    <label key={permission} className={`flex items-center p-1 rounded ${role.isSystem ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-50'}`}>
                                         <div className="relative flex items-center">
                                             <input
                                                 type="checkbox"
-                                                className="peer h-4 w-4 text-primary rounded border-gray-300 focus:ring-primary"
-                                                checked={state.rolePermissions[role.id]?.includes(permission)}
+                                                className="peer h-4 w-4 text-primary rounded border-gray-300 focus:ring-primary disabled:text-gray-400"
+                                                // If it's ADMIN, force check true visually. Otherwise, check state.
+                                                checked={role.id === 'admin' ? true : state.rolePermissions[role.id]?.includes(permission)}
                                                 onChange={(e) => handlePermissionsChange(role.id, permission, e.target.checked)}
+                                                disabled={role.isSystem}
                                             />
                                         </div>
                                         <span className="ml-2 text-sm text-gray-700">{permissionTranslations[permission]}</span>

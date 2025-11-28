@@ -256,6 +256,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const hasPermission = (permission: Permission): boolean => {
         if (!state.currentUser) return false;
+        
+        // 🚀 GOD MODE: Admin always has permission, regardless of table settings
+        if (state.currentUser.roleId === 'admin') return true;
+
         const userRoleId = state.currentUser.roleId;
         return state.rolePermissions[userRoleId]?.includes(permission) ?? false;
     };
