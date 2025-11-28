@@ -3,8 +3,9 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { Role, Permission, User } from '../types';
 import { v4 as uuidv4 } from 'uuid';
-import { PlusIcon, TrashIcon, EditIcon, CheckIcon, XIcon, SparklesIcon } from './Icons';
-import { updateUserRole, deleteUser } from '../services/sheetService';
+import { PlusIcon, TrashIcon, EditIcon, CheckIcon, XIcon, SparklesIcon, UserIcon, LockIcon } from './Icons';
+import { updateUserRole, deleteUser, updateUserDetails } from '../services/sheetService';
+import { Modal, ConfirmModal } from './UI';
 
 const permissionTranslations: Record<Permission, string> = {
     [Permission.VIEW_PATIENTS]: 'ดูข้อมูลคนไข้',
@@ -16,11 +17,101 @@ const permissionTranslations: Record<Permission, string> = {
     [Permission.MANAGE_APP_BUILDER]: 'เข้าถึง App Builder',
 };
 
+// --- Edit User Modal ---
+const EditUserModal: React.FC<{ user: User | null, isOpen: boolean, onClose: () => void, onSuccess: () => void }> = ({ user, isOpen, onClose, onSuccess }) => {
+    const { showToast } = useAppContext();
+    const [formData, setFormData] = useState({ displayName: '', phoneNumber: '', password: '' });
+    const [isLoading, setIsLoading] = useState(false);
+
+    useEffect(() => {
+        if (user) {
+            setFormData({
+                displayName: user.displayName || '',
+                phoneNumber: user.phoneNumber || '',
+                password: '' // Keep empty unless changing
+            });
+        }
+    }, [user]);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!user) return;
+        setIsLoading(true);
+        try {
+            const updates: Partial<User> = {
+                displayName: formData.displayName,
+                phoneNumber: formData.phoneNumber
+            };
+            if (formData.password) {
+                updates.passwordHash = formData.password;
+            }
+            await updateUserDetails(user.username, updates);
+            showToast('อัปเดตข้อมูลสำเร็จ', 'success');
+            onSuccess();
+            onClose();
+        } catch (e: any) {
+            showToast(`เกิดข้อผิดพลาด: ${e.message}`, 'error');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    if (!user) return null;
+
+    return (
+        <Modal isOpen={isOpen} title={`แก้ไขข้อมูล: ${user.username}`} onClose={onClose}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">ชื่อแสดงผล (Display Name)</label>
+                    <input 
+                        type="text" 
+                        required
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-primary focus:border-primary" 
+                        value={formData.displayName}
+                        onChange={e => setFormData({...formData, displayName: e.target.value})}
+                    />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">เบอร์โทรศัพท์</label>
+                    <input 
+                        type="text" 
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-primary focus:border-primary" 
+                        value={formData.phoneNumber}
+                        onChange={e => setFormData({...formData, phoneNumber: e.target.value})}
+                    />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">รหัสผ่านใหม่ (ปล่อยว่างถ้าไม่เปลี่ยน)</label>
+                    <input 
+                        type="password" 
+                        placeholder="******"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-primary focus:border-primary" 
+                        value={formData.password}
+                        onChange={e => setFormData({...formData, password: e.target.value})}
+                    />
+                </div>
+                <div className="pt-4 flex justify-end gap-2">
+                    <button type="button" onClick={onClose} className="px-4 py-2 border rounded-md text-gray-700 hover:bg-gray-50">ยกเลิก</button>
+                    <button 
+                        type="submit" 
+                        disabled={isLoading}
+                        className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary-dark flex items-center"
+                    >
+                        {isLoading && <SparklesIcon className="w-4 h-4 mr-2 animate-spin"/>}
+                        บันทึก
+                    </button>
+                </div>
+            </form>
+        </Modal>
+    );
+};
+
 // --- Components ---
 const RoleManager: React.FC = () => {
-    const { state, dispatch } = useAppContext();
+    const { state, dispatch, showToast } = useAppContext();
     const [editingRole, setEditingRole] = useState<Role | null>(null);
     const [roleName, setRoleName] = useState('');
+    const [confirmDeleteRole, setConfirmDeleteRole] = useState<Role | null>(null);
 
     const usersPerRole = useMemo(() => {
         return state.users.reduce((acc, user) => {
@@ -43,6 +134,7 @@ const RoleManager: React.FC = () => {
         if (!editingRole || roleName.trim() === '') return;
         const updatedRoles = state.roles.map(r => r.id === editingRole.id ? { ...r, name: roleName.trim() } : r);
         dispatch({ type: 'SET_ROLES', payload: updatedRoles });
+        showToast('แก้ไขบทบาทเรียบร้อย', 'success');
         handleCancel();
     };
     
@@ -52,56 +144,69 @@ const RoleManager: React.FC = () => {
             const newRole: Role = { id: uuidv4(), name: newName.trim() };
             dispatch({ type: 'SET_ROLES', payload: [...state.roles, newRole] });
             dispatch({ type: 'SET_ROLE_PERMISSIONS', payload: { ...state.rolePermissions, [newRole.id]: [] } });
+            showToast('เพิ่มบทบาทสำเร็จ', 'success');
         }
     };
     
-    const handleDeleteRole = (role: Role) => {
-        if (usersPerRole[role.id] > 0) {
-            alert('ไม่สามารถลบบทบาทนี้ได้เนื่องจากมีผู้ใช้งานที่ได้รับมอบหมาย');
-            return;
-        }
-        if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบบทบาท "${role.name}"?`)) {
-            const newRoles = state.roles.filter(r => r.id !== role.id);
-            const newPermissions = { ...state.rolePermissions };
-            delete newPermissions[role.id];
-            dispatch({ type: 'SET_ROLES', payload: newRoles });
-            dispatch({ type: 'SET_ROLE_PERMISSIONS', payload: newPermissions });
-        }
+    const handleDeleteRoleConfirm = () => {
+        if (!confirmDeleteRole) return;
+        const newRoles = state.roles.filter(r => r.id !== confirmDeleteRole.id);
+        const newPermissions = { ...state.rolePermissions };
+        delete newPermissions[confirmDeleteRole.id];
+        dispatch({ type: 'SET_ROLES', payload: newRoles });
+        dispatch({ type: 'SET_ROLE_PERMISSIONS', payload: newPermissions });
+        showToast('ลบบทบาทเรียบร้อย', 'success');
+        setConfirmDeleteRole(null);
     };
 
     return (
-        <div className="bg-app-background rounded-lg border border-app overflow-hidden mb-8">
-            <div className="p-4 border-b flex justify-between items-center">
-                <h2 className="text-xl font-semibold text-app-text">จัดการบทบาท (Roles)</h2>
-                <button onClick={handleAddRole} className="flex items-center text-sm bg-primary text-white px-3 py-1 rounded-md hover:bg-primary-dark">
-                    <PlusIcon className="w-4 h-4 mr-1"/> เพิ่มบทบาท
-                </button>
-            </div>
-            <div className="divide-y divide-gray-300">
-                {state.roles.map(role => (
-                    <div key={role.id} className="p-4 flex justify-between items-center">
-                        {editingRole?.id === role.id ? (
-                            <div className="flex-grow flex items-center gap-2">
-                                <input type="text" value={roleName} onChange={e => setRoleName(e.target.value)} className="p-1 border border-app rounded-md" />
-                                <button onClick={handleSave} className="p-1 text-green-600"><CheckIcon className="w-5 h-5"/></button>
-                                <button onClick={handleCancel} className="p-1 text-red-600"><XIcon className="w-5 h-5"/></button>
-                            </div>
-                        ) : (
-                            <div className="font-medium text-app-text">{role.name} {role.isSystem && <span className="text-xs text-app-text-muted">(System)</span>}</div>
-                        )}
-                        <div className="flex items-center space-x-2">
-                           <span className="text-sm text-app-text-muted">({usersPerRole[role.id] || 0} users)</span>
-                            {!role.isSystem && (
-                                <>
-                                <button onClick={() => handleEdit(role)} className="text-yellow-600 hover:text-yellow-900 p-1"><EditIcon className="w-5 h-5"/></button>
-                                <button onClick={() => handleDeleteRole(role)} className="text-red-600 hover:text-red-900 p-1" disabled={usersPerRole[role.id] > 0}><TrashIcon className="w-5 h-5"/></button>
-                                </>
+        <>
+            <div className="bg-app-background rounded-lg border border-app overflow-hidden mb-8 shadow-sm">
+                <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+                    <h2 className="text-xl font-semibold text-app-text">จัดการบทบาท (Roles)</h2>
+                    <button onClick={handleAddRole} className="flex items-center text-sm bg-primary text-white px-3 py-1.5 rounded-md hover:bg-primary-dark transition-colors shadow-sm">
+                        <PlusIcon className="w-4 h-4 mr-1"/> เพิ่มบทบาท
+                    </button>
+                </div>
+                <div className="divide-y divide-gray-200">
+                    {state.roles.map(role => (
+                        <div key={role.id} className="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                            {editingRole?.id === role.id ? (
+                                <div className="flex-grow flex items-center gap-2">
+                                    <input type="text" value={roleName} onChange={e => setRoleName(e.target.value)} className="p-1 border border-app rounded-md focus:ring-2 focus:ring-primary focus:outline-none" autoFocus />
+                                    <button onClick={handleSave} className="p-1 text-green-600 hover:text-green-800"><CheckIcon className="w-5 h-5"/></button>
+                                    <button onClick={handleCancel} className="p-1 text-red-600 hover:text-red-800"><XIcon className="w-5 h-5"/></button>
+                                </div>
+                            ) : (
+                                <div className="font-medium text-app-text flex items-center gap-2">
+                                    {role.name} 
+                                    {role.isSystem && <span className="bg-gray-200 text-gray-700 text-[10px] px-1.5 py-0.5 rounded-full uppercase tracking-wide">System</span>}
+                                </div>
                             )}
+                            <div className="flex items-center space-x-2">
+                               <span className="text-sm text-app-text-muted mr-2">({usersPerRole[role.id] || 0} users)</span>
+                                {!role.isSystem && (
+                                    <>
+                                    <button onClick={() => handleEdit(role)} className="text-yellow-600 hover:text-yellow-900 p-1.5 hover:bg-yellow-50 rounded"><EditIcon className="w-4 h-4"/></button>
+                                    <button onClick={() => setConfirmDeleteRole(role)} className="text-red-600 hover:text-red-900 p-1.5 hover:bg-red-50 rounded" disabled={usersPerRole[role.id] > 0}><TrashIcon className="w-4 h-4"/></button>
+                                    </>
+                                )}
+                            </div>
                         </div>
-                    </div>
-                ))}
+                    ))}
+                </div>
             </div>
-        </div>
+
+            <ConfirmModal 
+                isOpen={!!confirmDeleteRole}
+                title="ลบบทบาท"
+                message={`คุณแน่ใจหรือไม่ว่าต้องการลบบทบาท "${confirmDeleteRole?.name}"?`}
+                onCancel={() => setConfirmDeleteRole(null)}
+                onConfirm={handleDeleteRoleConfirm}
+                isDanger
+                confirmText="ลบ"
+            />
+        </>
     )
 }
 
@@ -111,73 +216,85 @@ const PendingUserRow: React.FC<{
     onApprove: (u: User, role: string) => Promise<void>,
     onReject: (u: User) => Promise<void>
 }> = ({ user, roles, onApprove, onReject }) => {
+    const { showToast } = useAppContext();
     const [selectedRole, setSelectedRole] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
-    const [msg, setMsg] = useState('');
+    const [confirmReject, setConfirmReject] = useState(false);
 
     const handleApproveClick = async () => {
         if (!selectedRole) {
-            alert('กรุณาเลือกบทบาทก่อนกดอนุมัติ');
+            alert('กรุณาเลือกบทบาทก่อนกดอนุมัติ'); // Simple alert here is fine for validation
             return;
         }
         setIsProcessing(true);
-        setMsg('กำลังบันทึก...');
         try {
             await onApprove(user, selectedRole);
+            showToast(`อนุมัติผู้ใช้ ${user.username} เรียบร้อย`, 'success');
         } catch (e: any) {
-            setMsg(`❌ ผิดพลาด: ${e.message}`);
+            showToast(`ผิดพลาด: ${e.message}`, 'error');
             setIsProcessing(false);
         }
     };
 
     const handleRejectClick = async () => {
-        if (!window.confirm(`ยืนยันลบ "${user.username}"?`)) return;
         setIsProcessing(true);
-        setMsg('กำลังลบ...');
         try {
             await onReject(user);
+            showToast(`ปฏิเสธคำขอของ ${user.username} เรียบร้อย`, 'info');
         } catch (e: any) {
-            setMsg(`❌ ผิดพลาด: ${e.message}`);
+            showToast(`ผิดพลาด: ${e.message}`, 'error');
             setIsProcessing(false);
         }
     };
 
     return (
-        <tr className="hover:bg-red-50 transition-colors border-b border-gray-100">
-            <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">{user.username}</td>
-            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{user.displayName || '-'}</td>
-            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{user.phoneNumber || '-'}</td>
-            <td className="px-6 py-4 whitespace-nowrap text-sm">
-                {isProcessing ? (
-                    <div className="text-primary text-xs font-bold flex items-center">
-                        <SparklesIcon className="animate-spin w-4 h-4 mr-1" /> {msg}
-                    </div>
-                ) : (
-                    <div className="flex items-center gap-2">
-                        <select 
-                            className="text-xs border-gray-300 rounded-md shadow-sm py-1"
-                            value={selectedRole}
-                            onChange={(e) => setSelectedRole(e.target.value)}
-                        >
-                            <option value="" disabled>-- เลือก --</option>
-                            {roles.filter(r => !r.isSystem || r.id === 'admin').map(r => (
-                                <option key={r.id} value={r.id}>{r.name}</option>
-                            ))}
-                        </select>
-                        <button onClick={handleApproveClick} disabled={!selectedRole} className="text-white bg-green-600 hover:bg-green-700 text-xs px-2 py-1 rounded disabled:bg-gray-300">อนุมัติ</button>
-                        <button onClick={handleRejectClick} className="text-red-600 border border-red-200 hover:bg-red-50 text-xs px-2 py-1 rounded">ปฏิเสธ</button>
-                    </div>
-                )}
-            </td>
-        </tr>
+        <>
+            <tr className="hover:bg-red-50 transition-colors border-b border-gray-100">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">{user.username}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{user.displayName || '-'}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{user.phoneNumber || '-'}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    {isProcessing ? (
+                        <div className="text-primary text-xs font-bold flex items-center">
+                            <SparklesIcon className="animate-spin w-4 h-4 mr-1" /> กำลังดำเนินการ...
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <select 
+                                className="text-xs border-gray-300 rounded-md shadow-sm py-1 focus:ring-primary focus:border-primary"
+                                value={selectedRole}
+                                onChange={(e) => setSelectedRole(e.target.value)}
+                            >
+                                <option value="" disabled>-- เลือก --</option>
+                                {roles.filter(r => !r.isSystem || r.id === 'admin').map(r => (
+                                    <option key={r.id} value={r.id}>{r.name}</option>
+                                ))}
+                            </select>
+                            <button onClick={handleApproveClick} disabled={!selectedRole} className="text-white bg-green-600 hover:bg-green-700 text-xs px-2 py-1 rounded disabled:bg-gray-300 shadow-sm transition-colors">อนุมัติ</button>
+                            <button onClick={() => setConfirmReject(true)} className="text-red-600 border border-red-200 hover:bg-red-50 text-xs px-2 py-1 rounded transition-colors">ปฏิเสธ</button>
+                        </div>
+                    )}
+                </td>
+            </tr>
+            <ConfirmModal 
+                isOpen={confirmReject} 
+                message={`ยืนยันลบคำขอของ "${user.username}"?`}
+                onCancel={() => setConfirmReject(false)}
+                onConfirm={() => { setConfirmReject(false); handleRejectClick(); }}
+                isDanger
+            />
+        </>
     );
 };
 
 // --- Main Component ---
 const UserManagement: React.FC = () => {
-    const { state, dispatch, hasPermission, refreshUserList } = useAppContext();
+    const { state, dispatch, hasPermission, refreshUserList, showToast } = useAppContext();
     const [activeTab, setActiveTab] = useState<'active' | 'pending'>('active');
-    const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+    
+    // Modal States
+    const [userToDelete, setUserToDelete] = useState<User | null>(null);
+    const [userToEdit, setUserToEdit] = useState<User | null>(null);
 
     useEffect(() => {
         refreshUserList();
@@ -197,7 +314,6 @@ const UserManagement: React.FC = () => {
             await updateUserRole(String(user.username), targetRole);
             await refreshUserList();
         } catch (e: any) {
-            alert(`เกิดข้อผิดพลาด: ${e.message}`);
             throw e;
         }
     };
@@ -207,29 +323,24 @@ const UserManagement: React.FC = () => {
             await deleteUser(String(user.username));
             await refreshUserList();
         } catch (e: any) {
-            alert(`เกิดข้อผิดพลาด: ${e.message}`);
             throw e;
         }
     };
     
-    const handleDeleteActiveUser = async (user: User) => {
-         if (!window.confirm(`ยืนยันลบผู้ใช้งาน ${user.username} ออกจากระบบ?`)) return;
-         
-         setDeletingIds(prev => new Set(prev).add(user.id));
-         
+    const confirmDelete = async () => {
+        if (!userToDelete) return;
          try {
-            await deleteUser(String(user.username));
+            await deleteUser(String(userToDelete.username));
             await refreshUserList();
+            showToast(`ลบผู้ใช้ ${userToDelete.username} สำเร็จ`, 'success');
         } catch (err: any) {
-             alert('เกิดข้อผิดพลาด: ' + err.message);
+             showToast('เกิดข้อผิดพลาด: ' + err.message, 'error');
         } finally {
-            setDeletingIds(prev => {
-                const next = new Set(prev);
-                next.delete(user.id);
-                return next;
-            });
+            setUserToDelete(null);
         }
     };
+
+    const isCurrentUser = (user: User) => state.currentUser?.username === user.username;
 
     return (
         <div className="max-w-5xl mx-auto pb-20">
@@ -237,7 +348,7 @@ const UserManagement: React.FC = () => {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                  <h1 className="text-3xl font-bold text-app-text">จัดการผู้ใช้งาน</h1>
                  <div className="flex gap-2">
-                    <button onClick={() => refreshUserList()} className="bg-primary text-white px-4 py-2 rounded shadow hover:bg-primary-dark text-sm flex items-center" disabled={state.isUsersLoading}>
+                    <button onClick={() => refreshUserList()} className="bg-primary text-white px-4 py-2 rounded shadow hover:bg-primary-dark text-sm flex items-center transition-all" disabled={state.isUsersLoading}>
                         {state.isUsersLoading ? <SparklesIcon className="animate-spin w-4 h-4 mr-2" /> : '⟳'} อัปเดตข้อมูล
                     </button>
                  </div>
@@ -245,12 +356,12 @@ const UserManagement: React.FC = () => {
 
             <div className="mb-6 border-b border-gray-200">
                 <nav className="-mb-px flex space-x-8">
-                    <button onClick={() => setActiveTab('active')} className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'active' ? 'border-primary text-primary' : 'border-transparent text-gray-500'}`}>
+                    <button onClick={() => setActiveTab('active')} className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'active' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                         ผู้ใช้งานปัจจุบัน ({activeUsers.length})
                     </button>
-                    <button onClick={() => setActiveTab('pending')} className={`py-4 px-1 border-b-2 font-medium text-sm relative ${activeTab === 'pending' ? 'border-primary text-primary' : 'border-transparent text-gray-500'}`}>
+                    <button onClick={() => setActiveTab('pending')} className={`py-4 px-1 border-b-2 font-medium text-sm relative transition-colors ${activeTab === 'pending' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                         คำขอรออนุมัติ ({pendingUsers.length})
-                        {pendingUsers.length > 0 && <span className="ml-2 bg-red-500 text-white text-xs px-2 rounded-full">{pendingUsers.length}</span>}
+                        {pendingUsers.length > 0 && <span className="ml-2 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full shadow-sm animate-pulse">{pendingUsers.length}</span>}
                     </button>
                 </nav>
             </div>
@@ -260,10 +371,10 @@ const UserManagement: React.FC = () => {
                     <table className="min-w-full divide-y divide-gray-300">
                         <thead className="bg-red-50">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-red-800 uppercase">Username</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-red-800 uppercase">Name</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-red-800 uppercase">Phone</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-red-800 uppercase">Action</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-red-800 uppercase">Username</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-red-800 uppercase">Name</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-red-800 uppercase">Phone</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-red-800 uppercase">Action</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
@@ -285,17 +396,20 @@ const UserManagement: React.FC = () => {
                     <table className="min-w-full divide-y divide-gray-300">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Username</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phone</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Action</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Username</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Name</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Phone</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Role</th>
+                                <th className="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase">Action</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {activeUsers.map(user => (
-                                <tr key={user.id} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 text-sm font-medium text-gray-900">{user.username}</td>
+                                <tr key={user.id} className={`hover:bg-gray-50 transition-colors ${isCurrentUser(user) ? 'bg-blue-50 hover:bg-blue-100' : ''}`}>
+                                    <td className="px-6 py-4 text-sm font-medium text-gray-900 flex items-center gap-2">
+                                        {user.username}
+                                        {isCurrentUser(user) && <span className="text-xs bg-blue-200 text-blue-800 px-1.5 rounded">You</span>}
+                                    </td>
                                     <td className="px-6 py-4 text-sm text-gray-500">{user.displayName || '-'}</td>
                                     <td className="px-6 py-4 text-sm text-gray-500">{user.phoneNumber || '-'}</td>
                                     <td className="px-6 py-4 text-sm">
@@ -303,19 +417,26 @@ const UserManagement: React.FC = () => {
                                             {state.roles.find(r => r.id === user.roleId)?.name || user.roleId}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 text-right">
-                                         {user.roleId !== 'admin' && (
+                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                         {/* Edit Button: Visible if admin OR current user */}
+                                         {(state.currentUser?.roleId === 'admin' || isCurrentUser(user)) && (
+                                             <button
+                                                onClick={() => setUserToEdit(user)}
+                                                className="text-blue-600 hover:text-blue-900 p-1.5 hover:bg-blue-100 rounded transition-colors"
+                                                title="แก้ไขข้อมูลส่วนตัว"
+                                             >
+                                                 <EditIcon className="w-5 h-5" />
+                                             </button>
+                                         )}
+
+                                         {/* Delete Button: Admin only, cannot delete self */}
+                                         {state.currentUser?.roleId === 'admin' && !isCurrentUser(user) && (
                                             <button 
-                                                onClick={() => handleDeleteActiveUser(user)} 
-                                                className="text-red-600 hover:text-red-900 p-1 bg-red-50 rounded disabled:opacity-50"
-                                                disabled={deletingIds.has(user.id)}
+                                                onClick={() => setUserToDelete(user)} 
+                                                className="text-red-600 hover:text-red-900 p-1.5 hover:bg-red-100 rounded transition-colors"
                                                 title="ลบผู้ใช้งาน"
                                             >
-                                                {deletingIds.has(user.id) ? (
-                                                    <SparklesIcon className="w-5 h-5 animate-spin" />
-                                                ) : (
-                                                    <TrashIcon className="w-5 h-5" />
-                                                )}
+                                                <TrashIcon className="w-5 h-5" />
                                             </button>
                                          )}
                                     </td>
@@ -334,18 +455,20 @@ const UserManagement: React.FC = () => {
                 <h2 className="text-lg font-bold mb-4">กำหนดสิทธิ์ (Permissions)</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {state.roles.filter(role => !role.isSystem).map(role => (
-                        <div key={role.id} className="border rounded p-4 bg-white">
-                            <h3 className="font-bold text-primary mb-2">{role.name}</h3>
-                            <div className="space-y-1">
+                        <div key={role.id} className="border rounded-lg p-4 bg-white shadow-sm hover:shadow-md transition-shadow">
+                            <h3 className="font-bold text-primary mb-3 border-b pb-2">{role.name}</h3>
+                            <div className="space-y-2">
                                 {Object.values(Permission).map(permission => (
-                                    <label key={permission} className="flex items-center">
-                                        <input
-                                            type="checkbox"
-                                            className="h-4 w-4 text-primary rounded mr-2"
-                                            checked={state.rolePermissions[role.id]?.includes(permission)}
-                                            onChange={(e) => handlePermissionsChange(role.id, permission, e.target.checked)}
-                                        />
-                                        <span className="text-sm">{permissionTranslations[permission]}</span>
+                                    <label key={permission} className="flex items-center cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                        <div className="relative flex items-center">
+                                            <input
+                                                type="checkbox"
+                                                className="peer h-4 w-4 text-primary rounded border-gray-300 focus:ring-primary"
+                                                checked={state.rolePermissions[role.id]?.includes(permission)}
+                                                onChange={(e) => handlePermissionsChange(role.id, permission, e.target.checked)}
+                                            />
+                                        </div>
+                                        <span className="ml-2 text-sm text-gray-700">{permissionTranslations[permission]}</span>
                                     </label>
                                 ))}
                             </div>
@@ -353,6 +476,23 @@ const UserManagement: React.FC = () => {
                     ))}
                 </div>
             </div>
+
+            <ConfirmModal 
+                isOpen={!!userToDelete}
+                title="ลบผู้ใช้งาน"
+                message={`คุณแน่ใจหรือไม่ว่าต้องการลบผู้ใช้งาน "${userToDelete?.username}" ออกจากระบบ?`}
+                onCancel={() => setUserToDelete(null)}
+                onConfirm={confirmDelete}
+                isDanger
+                confirmText="ลบผู้ใช้งาน"
+            />
+
+            <EditUserModal 
+                isOpen={!!userToEdit}
+                user={userToEdit}
+                onClose={() => setUserToEdit(null)}
+                onSuccess={() => refreshUserList()}
+            />
         </div>
     );
 };

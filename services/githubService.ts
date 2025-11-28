@@ -207,6 +207,21 @@ export const updateGitHubUserRole = async (username: string, newRole: string): P
     await saveFileContent(USERS_PATH, users, `Update role ${username}`, file.sha);
 };
 
+export const updateGitHubUserDetails = async (username: string, details: Partial<User>): Promise<void> => {
+    const file = await getFileContent(USERS_PATH);
+    if (!file) throw new Error("Database error");
+    const users: User[] = file.content;
+    const index = users.findIndex(u => u.username === username);
+    if (index === -1) throw new Error("User not found");
+    
+    // Update fields
+    if (details.displayName) users[index].displayName = details.displayName;
+    if (details.phoneNumber) users[index].phoneNumber = details.phoneNumber;
+    if (details.passwordHash) users[index].passwordHash = details.passwordHash;
+
+    await saveFileContent(USERS_PATH, users, `Update details ${username}`, file.sha);
+};
+
 export const deleteGitHubUser = async (username: string): Promise<void> => {
     const file = await getFileContent(USERS_PATH);
     if (!file) throw new Error("Database error");

@@ -1,7 +1,9 @@
+
 import React, { useEffect } from 'react';
 import { AppProvider, useAppContext } from './contexts/AppContext';
 import LoginPage from './components/LoginPage';
 import MainLayout from './components/MainLayout';
+import { ToastContainer } from './components/UI';
 
 const hexToRgb = (hex: string): string => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -31,15 +33,35 @@ const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     return <>{children}</>;
 };
 
+const GlobalUI: React.FC = () => {
+    const { state, dispatch } = useAppContext();
+    return (
+        <ToastContainer 
+            toasts={state.toasts} 
+            removeToast={(id) => dispatch({ type: 'REMOVE_TOAST', payload: id })} 
+        />
+    );
+};
+
 
 const AppContent: React.FC = () => {
     const { state } = useAppContext();
 
     if (!state.currentUser) {
-        return <LoginPage />;
+        return (
+            <>
+                <LoginPage />
+                <GlobalUI />
+            </>
+        );
     }
 
-    return <MainLayout />;
+    return (
+        <>
+            <MainLayout />
+            <GlobalUI />
+        </>
+    );
 };
 
 const App: React.FC = () => {

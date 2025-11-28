@@ -5,6 +5,7 @@ import { Permission, GenericData, DataModel } from '../types';
 import PatientForm from './PatientForm';
 import PatientDetail from './PatientDetail';
 import { PlusIcon, EditIcon, TrashIcon, SettingsIcon, GripVerticalIcon, SparklesIcon } from './Icons';
+import { ConfirmModal } from './UI';
 
 type ColumnSetting = {
     id: string;
@@ -13,7 +14,7 @@ type ColumnSetting = {
 };
 
 const PatientList: React.FC = () => {
-    const { state, dispatch, hasPermission, deletePatient, refreshPatientData } = useAppContext();
+    const { state, dispatch, hasPermission, deletePatient, refreshPatientData, showToast } = useAppContext();
     const [searchTerm, setSearchTerm] = useState('');
     const [editingPatient, setEditingPatient] = useState<GenericData | 'new' | null>(null);
     const [viewingPatient, setViewingPatient] = useState<GenericData | null>(null);
@@ -22,6 +23,9 @@ const PatientList: React.FC = () => {
     const [settingsColumns, setSettingsColumns] = useState<ColumnSetting[]>([]);
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [deletingId, setDeletingId] = useState<string | null>(null);
+    
+    // Modal State
+    const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
     const patientModel = useMemo(() => state.dataModels.find(m => m.id === 'patients'), [state.dataModels]);
     const patientData = useMemo(() => state.data['patients'] || [], [state.data]);
@@ -29,7 +33,6 @@ const PatientList: React.FC = () => {
     const filteredPatients = useMemo(() => {
         if (!patientModel) return [];
         return patientData.filter(p => {
-            // 🔥 Defensive Check: Prevent empty frames/rows
             if (!p || !p.values || Object.keys(p.values).length === 0) return false;
 
             const name = p.values[patientModel.nameFieldId] || '';
@@ -41,20 +44,20 @@ const PatientList: React.FC = () => {
         });
     }, [patientData, searchTerm, patientModel]);
 
-    const handleDelete = async (patientId: string) => {
-        if (window.confirm('คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลคนไข้รายนี้? (การลบจะส่งผลต่อฐานข้อมูลออนไลน์)')) {
-            setDeletingId(patientId);
-            try {
-                await deletePatient(patientId);
-            } catch (e: any) {
-                alert('ลบไม่สำเร็จ: ' + e.message);
-            } finally {
-                setDeletingId(null);
-            }
+    const handleConfirmDelete = async () => {
+        if (!confirmDeleteId) return;
+        setDeletingId(confirmDeleteId);
+        try {
+            await deletePatient(confirmDeleteId);
+        } catch (e: any) {
+            showToast('ลบไม่สำเร็จ: ' + e.message, 'error');
+        } finally {
+            setDeletingId(null);
+            setConfirmDeleteId(null);
         }
     };
     
-    // ... Columns Logic (Same as before) ...
+    // ... Columns Logic ...
     const allPossibleColumns = useMemo(() => {
         if (!patientModel) return [];
         return patientModel.schema.map(f => ({ id: f.id, label: f.label }));
@@ -202,11 +205,6 @@ const PatientList: React.FC = () => {
                             <p className="text-sm text-red-600 mt-1">
                                 {state.dataFetchError}
                             </p>
-                            {state.dataFetchError.includes('Unknown action') && (
-                                <p className="text-xs text-red-500 mt-2">
-                                    <strong>วิธีแก้:</strong> กรุณาอัปเดต Google Apps Script เป็นเวอร์ชันล่าสุด (New Version) ที่มีฟังก์ชัน "getPatients"
-                                </p>
-                            )}
                         </div>
                     </div>
                 </div>
@@ -216,31 +214,31 @@ const PatientList: React.FC = () => {
                 <input
                     type="text"
                     placeholder="ค้นหา..."
-                    className="w-full p-3 border border-app rounded-lg bg-app-background text-app-text"
+                    className="w-full p-3 border border-app rounded-lg bg-app-background text-app-text focus:ring-2 focus:ring-primary focus:outline-none transition-shadow"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
                 />
             </div>
 
-            <div className="hidden md:block bg-app-background rounded-lg border border-app overflow-hidden">
+            <div className="hidden md:block bg-app-background rounded-lg border border-app overflow-hidden shadow-sm">
                 <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-300">
-                        <thead className="bg-app-background">
+                        <thead className="bg-gray-50">
                             <tr>
                                 {visibleColumns.map(col => (
-                                    <th key={col.id} scope="col" className="px-6 py-3 text-left text-xs font-medium text-app-text uppercase tracking-wider">{col.label}</th>
+                                    <th key={col.id} scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">{col.label}</th>
                                 ))}
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-app-text uppercase tracking-wider">วันที่บันทึก</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">วันที่บันทึก</th>
                                 <th scope="col" className="relative px-6 py-3"><span className="sr-only">Actions</span></th>
                             </tr>
                         </thead>
-                        <tbody className="bg-app-background divide-y divide-gray-300">
+                        <tbody className="bg-app-background divide-y divide-gray-200">
                             {filteredPatients.map(patient => (
-                                <tr key={patient.id} className="hover:bg-gray-100">
+                                <tr key={patient.id} className="hover:bg-gray-50 transition-colors">
                                     {visibleColumns.map(col => (
                                         <td key={col.id} className="px-6 py-4 whitespace-nowrap text-sm text-app-text-muted truncate max-w-xs">
                                             {col.id === patientModel.nameFieldId ? 
-                                                <button onClick={() => setViewingPatient(patient)} className="font-medium text-primary hover:text-primary-dark text-left">{patient.values[col.id]}</button> :
+                                                <button onClick={() => setViewingPatient(patient)} className="font-semibold text-primary hover:text-primary-dark text-left underline decoration-dotted underline-offset-2">{patient.values[col.id]}</button> :
                                                 patient.values[col.id] || '-'
                                             }
                                         </td>
@@ -249,10 +247,10 @@ const PatientList: React.FC = () => {
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                         <div className="flex items-center justify-end space-x-2">
                                             {hasPermission(Permission.EDIT_PATIENT) && (
-                                                <button onClick={() => setEditingPatient(patient)} className="text-yellow-600 hover:text-yellow-900 p-1 rounded-full hover:bg-yellow-100"><EditIcon className="w-5 h-5" /></button>
+                                                <button onClick={() => setEditingPatient(patient)} className="text-yellow-600 hover:text-yellow-900 p-2 rounded-full hover:bg-yellow-50 transition-colors"><EditIcon className="w-5 h-5" /></button>
                                             )}
                                             {hasPermission(Permission.DELETE_PATIENT) && (
-                                                <button onClick={() => handleDelete(patient.id)} className="text-red-600 hover:text-red-900 p-1 rounded-full hover:bg-red-100" disabled={deletingId === patient.id}>
+                                                <button onClick={() => setConfirmDeleteId(patient.id)} className="text-red-600 hover:text-red-900 p-2 rounded-full hover:bg-red-50 transition-colors" disabled={deletingId === patient.id}>
                                                     {deletingId === patient.id ? <SparklesIcon className="w-5 h-5 animate-spin" /> : <TrashIcon className="w-5 h-5" />}
                                                 </button>
                                             )}
@@ -263,7 +261,7 @@ const PatientList: React.FC = () => {
                         </tbody>
                     </table>
                 </div>
-                 {filteredPatients.length === 0 && !state.dataFetchError && <p className="text-center text-app-text-muted py-8">ไม่พบข้อมูล {state.isDataLoading && '(กำลังโหลด...)'}</p>}
+                 {filteredPatients.length === 0 && !state.dataFetchError && <p className="text-center text-app-text-muted py-12">ไม่พบข้อมูล {state.isDataLoading && '(กำลังโหลด...)'}</p>}
             </div>
 
             <div className="md:hidden space-y-4">
@@ -272,7 +270,7 @@ const PatientList: React.FC = () => {
                     const hnField = patientModel.schema.find(f => f.label.toLowerCase() === 'hn');
                     const hn = hnField ? patient.values[hnField.id] : '';
                     return (
-                        <div key={patient.id} className="bg-app-background rounded-lg border border-app p-4 space-y-2">
+                        <div key={patient.id} className="bg-app-background rounded-lg border border-app p-4 space-y-2 shadow-sm">
                              <div className="flex justify-between items-start">
                                 <div className="flex-grow">
                                     <button onClick={() => setViewingPatient(patient)} className="font-bold text-lg text-primary hover:text-primary-dark text-left">{name}</button>
@@ -280,10 +278,10 @@ const PatientList: React.FC = () => {
                                 </div>
                                 <div className="flex items-center space-x-1 flex-shrink-0 ml-2">
                                     {hasPermission(Permission.EDIT_PATIENT) && (
-                                        <button onClick={() => setEditingPatient(patient)} className="text-yellow-600 hover:text-yellow-900 p-1"><EditIcon className="w-5 h-5" /></button>
+                                        <button onClick={() => setEditingPatient(patient)} className="text-yellow-600 hover:text-yellow-900 p-2"><EditIcon className="w-5 h-5" /></button>
                                     )}
                                     {hasPermission(Permission.DELETE_PATIENT) && (
-                                        <button onClick={() => handleDelete(patient.id)} className="text-red-600 hover:text-red-900 p-1">
+                                        <button onClick={() => setConfirmDeleteId(patient.id)} className="text-red-600 hover:text-red-900 p-2">
                                             {deletingId === patient.id ? <SparklesIcon className="w-5 h-5 animate-spin" /> : <TrashIcon className="w-5 h-5" />}
                                         </button>
                                     )}
@@ -293,6 +291,17 @@ const PatientList: React.FC = () => {
                     );
                 })}
             </div>
+
+            <ConfirmModal
+                isOpen={!!confirmDeleteId}
+                title="ลบข้อมูลคนไข้"
+                message="คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลคนไข้รายนี้? การกระทำนี้ไม่สามารถย้อนกลับได้"
+                confirmText="ลบข้อมูล"
+                isDanger={true}
+                isLoading={!!deletingId}
+                onConfirm={handleConfirmDelete}
+                onCancel={() => setConfirmDeleteId(null)}
+            />
         </div>
     );
 };

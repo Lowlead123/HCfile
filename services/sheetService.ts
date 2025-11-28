@@ -4,6 +4,7 @@ import {
     fetchGitHubUsers, 
     registerGitHubUser, 
     updateGitHubUserRole, 
+    updateGitHubUserDetails,
     deleteGitHubUser,
     fetchGitHubPatients,
     saveGitHubPatient,
@@ -56,6 +57,10 @@ export const fetchUserListSafe = async (): Promise<User[]> => {
 
 export const updateUserRole = async (username: string, newRole: string): Promise<void> => {
     await updateGitHubUserRole(username, newRole);
+};
+
+export const updateUserDetails = async (username: string, details: Partial<User>): Promise<void> => {
+    await updateGitHubUserDetails(username, details);
 };
 
 export const deleteUser = async (username: string): Promise<void> => {

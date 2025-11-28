@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useReducer, useEffect, useRef, ReactNode } from 'react';
-import { User, Role, Permission, RolePermissions, DataModel, GenericData, ThemeSettings, NavigationItem, DashboardWidget, PageThemeOverride, CustomPage } from '../types';
+import { User, Role, Permission, RolePermissions, DataModel, GenericData, ThemeSettings, NavigationItem, DashboardWidget, PageThemeOverride, CustomPage, ToastMessage, ToastType } from '../types';
 import { INITIAL_ROLE_PERMISSIONS, INITIAL_THEME_SETTINGS, INITIAL_NAVIGATION, INITIAL_ROLES, INITIAL_DATA_MODELS } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
 import { fetchUserListSafe, authenticateUser, fetchPatientData, savePatientData, deletePatientData } from '../services/sheetService';
@@ -21,7 +21,9 @@ interface AppState {
     isUsersLoading: boolean;
     userFetchError: string | null;
     isDataLoading: boolean;
-    dataFetchError: string | null; // Added error state for data
+    dataFetchError: string | null;
+    // UI State
+    toasts: ToastMessage[];
 }
 
 type Action =
@@ -41,7 +43,9 @@ type Action =
     | { type: 'SET_USERS_LOADING'; payload: boolean }
     | { type: 'SET_USERS_ERROR'; payload: string | null }
     | { type: 'SET_DATA_LOADING'; payload: boolean }
-    | { type: 'SET_DATA_ERROR'; payload: string | null };
+    | { type: 'SET_DATA_ERROR'; payload: string | null }
+    | { type: 'ADD_TOAST'; payload: ToastMessage }
+    | { type: 'REMOVE_TOAST'; payload: string };
 
 
 const initialState: AppState = {
@@ -61,6 +65,7 @@ const initialState: AppState = {
     userFetchError: null,
     isDataLoading: false,
     dataFetchError: null,
+    toasts: [],
 };
 
 const appReducer = (state: AppState, action: Action): AppState => {
@@ -82,12 +87,12 @@ const appReducer = (state: AppState, action: Action): AppState => {
         case 'SET_USERS_ERROR': return { ...state, userFetchError: action.payload };
         case 'SET_DATA_LOADING': return { ...state, isDataLoading: action.payload };
         case 'SET_DATA_ERROR': return { ...state, dataFetchError: action.payload };
+        case 'ADD_TOAST': return { ...state, toasts: [...state.toasts, action.payload] };
+        case 'REMOVE_TOAST': return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
         default: return state;
     }
 };
 
-// --- CLIENT-SIDE CACHE FOR IMMEDIATE FEEDBACK ---
-// We keep this as a secondary layer to ensure the UI feels instant
 const TOMBSTONE_KEY = 'hc_local_tombstones';
 
 const getLocalTombstones = (): Set<string> => {
@@ -119,6 +124,7 @@ const AppContext = createContext<{
     refreshPatientData: () => Promise<void>;
     savePatient: (item: GenericData) => Promise<void>;
     deletePatient: (id: string) => Promise<void>;
+    showToast: (message: string, type?: ToastType) => void;
 }>({
     state: initialState,
     dispatch: () => null,
@@ -128,6 +134,7 @@ const AppContext = createContext<{
     refreshPatientData: async () => {},
     savePatient: async () => {},
     deletePatient: async () => {},
+    showToast: () => {},
 });
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -152,6 +159,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         localStorage.setItem('app_ui_settings', JSON.stringify(uiSettings));
     }, [state.theme, state.patientListVisibleColumns]);
 
+    const showToast = (message: string, type: ToastType = 'info') => {
+        const id = uuidv4();
+        dispatch({ type: 'ADD_TOAST', payload: { id, message, type } });
+    };
 
     const login = async (username: string, password: string) => {
         dispatch({ type: 'SET_USERS_LOADING', payload: true });
@@ -159,14 +170,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         try {
             const user = await authenticateUser(username, password);
             dispatch({ type: 'LOGIN', payload: user });
+            showToast(`ยินดีต้อนรับ ${user.displayName || user.username}`, 'success');
             
-            // Load data after login
             refreshPatientData();
             if (user.roleId === 'admin') {
                 refreshUserList();
             }
         } catch (error: any) {
-            dispatch({ type: 'SET_USERS_ERROR', payload: error.message || 'Login failed' });
+            const msg = error.message || 'Login failed';
+            dispatch({ type: 'SET_USERS_ERROR', payload: msg });
+            showToast(msg, 'error');
             throw error;
         } finally {
             dispatch({ type: 'SET_USERS_LOADING', payload: false });
@@ -174,7 +187,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     const refreshUserList = async () => {
-        if (state.currentUser?.roleId !== 'admin') return;
+        // Allow refresh if admin OR if current user needs to update their own profile view
         try {
             const users = await fetchUserListSafe();
             dispatch({ type: 'SET_USERS', payload: users });
@@ -189,7 +202,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         try {
             const rawData = await fetchPatientData();
             
-            // Double protection: Filter using client-side cache as well
             const localTombstones = getLocalTombstones();
             const cleanData = rawData.filter(item => !localTombstones.has(item.id));
 
@@ -197,6 +209,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         } catch (error: any) {
             console.error("Failed to load patients", error);
             dispatch({ type: 'SET_DATA_ERROR', payload: error.message || 'Error loading data' });
+            showToast('โหลดข้อมูลไม่สำเร็จ', 'error');
         } finally {
             dispatch({ type: 'SET_DATA_LOADING', payload: false });
         }
@@ -205,13 +218,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const savePatient = async (item: GenericData) => {
         dispatch({ type: 'SET_DATA_LOADING', payload: true });
         try {
-            // Find the model to get the schema
             const model = state.dataModels.find(m => m.id === item.modelId);
             const schema = model ? model.schema : [];
             
             await savePatientData(item, schema);
             await refreshPatientData();
-        } catch (error) {
+            showToast('บันทึกข้อมูลเรียบร้อย', 'success');
+        } catch (error: any) {
+            showToast(error.message || 'บันทึกไม่สำเร็จ', 'error');
             throw error;
         } finally {
             dispatch({ type: 'SET_DATA_LOADING', payload: false });
@@ -219,7 +233,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     const deletePatient = async (id: string) => {
-        // 1. Client-Side Optimistic UI (Hide immediately)
         addLocalTombstone(id);
         
         const previousData = state.data['patients'] || [];
@@ -231,19 +244,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
 
         try {
-            // 2. Server-Side Permanent Deletion (Create Tombstone File)
             await deletePatientData(id);
-            
-            // 3. Refresh to sync state (though optimistic UI already handled it)
-            // We wait a bit to ensure GitHub has processed the file creation
             setTimeout(() => refreshPatientData(), 1000);
+            showToast('ลบข้อมูลเรียบร้อย', 'success');
 
-        } catch (error) {
+        } catch (error: any) {
             console.error("Deletion failed on server:", error);
-            // We DO NOT revert the UI. 
-            // If the user wants to see it again, they can clear cache/reload, 
-            // but for now, we assume the user wanted it gone.
-            // The local tombstone keeps it hidden.
+            showToast('การลบข้อมูลบน Server มีปัญหา แต่เราซ่อนข้อมูลไว้แล้ว', 'info');
         }
     };
 
@@ -254,7 +261,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     return (
-        <AppContext.Provider value={{ state, dispatch, hasPermission, login, refreshUserList, refreshPatientData, savePatient, deletePatient }}>
+        <AppContext.Provider value={{ state, dispatch, hasPermission, login, refreshUserList, refreshPatientData, savePatient, deletePatient, showToast }}>
             {children}
         </AppContext.Provider>
     );
