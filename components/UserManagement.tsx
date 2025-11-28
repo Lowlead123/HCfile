@@ -18,9 +18,9 @@ const permissionTranslations: Record<Permission, string> = {
 };
 
 // --- Edit User Modal ---
-const EditUserModal: React.FC<{ user: User | null, isOpen: boolean, onClose: () => void, onSuccess: () => void }> = ({ user, isOpen, onClose, onSuccess }) => {
-    const { showToast } = useAppContext();
-    const [formData, setFormData] = useState({ displayName: '', phoneNumber: '', password: '' });
+const EditUserModal: React.FC<{ user: User | null, roles: Role[], isOpen: boolean, onClose: () => void, onSuccess: () => void }> = ({ user, roles, isOpen, onClose, onSuccess }) => {
+    const { showToast, state } = useAppContext();
+    const [formData, setFormData] = useState({ displayName: '', phoneNumber: '', password: '', roleId: '' });
     const [isLoading, setIsLoading] = useState(false);
 
     useEffect(() => {
@@ -28,6 +28,7 @@ const EditUserModal: React.FC<{ user: User | null, isOpen: boolean, onClose: () 
             setFormData({
                 displayName: user.displayName || '',
                 phoneNumber: user.phoneNumber || '',
+                roleId: user.roleId,
                 password: '' // Keep empty unless changing
             });
         }
@@ -38,6 +39,7 @@ const EditUserModal: React.FC<{ user: User | null, isOpen: boolean, onClose: () 
         if (!user) return;
         setIsLoading(true);
         try {
+            // 1. Update Details
             const updates: Partial<User> = {
                 displayName: formData.displayName,
                 phoneNumber: formData.phoneNumber
@@ -46,6 +48,12 @@ const EditUserModal: React.FC<{ user: User | null, isOpen: boolean, onClose: () 
                 updates.passwordHash = formData.password;
             }
             await updateUserDetails(user.username, updates);
+
+            // 2. Update Role (if changed and user has permission)
+            if (formData.roleId !== user.roleId && state.currentUser?.roleId === 'admin') {
+                 await updateUserRole(user.username, formData.roleId);
+            }
+
             showToast('อัปเดตข้อมูลสำเร็จ', 'success');
             onSuccess();
             onClose();
@@ -80,6 +88,23 @@ const EditUserModal: React.FC<{ user: User | null, isOpen: boolean, onClose: () 
                         onChange={e => setFormData({...formData, phoneNumber: e.target.value})}
                     />
                 </div>
+                
+                {/* Role Selection (Admin Only) */}
+                {state.currentUser?.roleId === 'admin' && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">บทบาท (Role)</label>
+                        <select 
+                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-primary focus:border-primary"
+                            value={formData.roleId}
+                            onChange={e => setFormData({...formData, roleId: e.target.value})}
+                        >
+                            {roles.filter(r => !r.isSystem || r.id === 'admin').map(role => (
+                                <option key={role.id} value={role.id}>{role.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
                 <div>
                     <label className="block text-sm font-medium text-gray-700">รหัสผ่านใหม่ (ปล่อยว่างถ้าไม่เปลี่ยน)</label>
                     <input 
@@ -454,7 +479,6 @@ const UserManagement: React.FC = () => {
             <div className="mt-8 border-t pt-6">
                 <h2 className="text-lg font-bold mb-4">กำหนดสิทธิ์ (Permissions)</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {/* Show ALL roles, including System roles, but disable editing for them */}
                     {state.roles.map(role => (
                         <div key={role.id} className={`border rounded-lg p-4 shadow-sm transition-shadow ${role.isSystem ? 'bg-gray-50 border-gray-200' : 'bg-white hover:shadow-md'}`}>
                             <h3 className="font-bold text-primary mb-3 border-b pb-2 flex justify-between items-center">
@@ -462,21 +486,25 @@ const UserManagement: React.FC = () => {
                                 {role.isSystem && <LockIcon className="w-4 h-4 text-gray-400" title="System Role (Read-Only)" />}
                             </h3>
                             <div className="space-y-2">
-                                {Object.values(Permission).map(permission => (
-                                    <label key={permission} className={`flex items-center p-1 rounded ${role.isSystem ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-50'}`}>
-                                        <div className="relative flex items-center">
-                                            <input
-                                                type="checkbox"
-                                                className="peer h-4 w-4 text-primary rounded border-gray-300 focus:ring-primary disabled:text-gray-400"
-                                                // If it's ADMIN, force check true visually. Otherwise, check state.
-                                                checked={role.id === 'admin' ? true : state.rolePermissions[role.id]?.includes(permission)}
-                                                onChange={(e) => handlePermissionsChange(role.id, permission, e.target.checked)}
-                                                disabled={role.isSystem}
-                                            />
-                                        </div>
-                                        <span className="ml-2 text-sm text-gray-700">{permissionTranslations[permission]}</span>
-                                    </label>
-                                ))}
+                                {Object.values(Permission).map(permission => {
+                                    // VISUAL LOGIC: If Admin, appear checked. Else, check state.
+                                    const isChecked = role.id === 'admin' ? true : state.rolePermissions[role.id]?.includes(permission);
+                                    
+                                    return (
+                                        <label key={permission} className={`flex items-center p-1 rounded ${role.isSystem ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-50'}`}>
+                                            <div className="relative flex items-center">
+                                                <input
+                                                    type="checkbox"
+                                                    className="peer h-4 w-4 text-primary rounded border-gray-300 focus:ring-primary disabled:text-gray-400"
+                                                    checked={isChecked}
+                                                    onChange={(e) => handlePermissionsChange(role.id, permission, e.target.checked)}
+                                                    disabled={role.isSystem}
+                                                />
+                                            </div>
+                                            <span className="ml-2 text-sm text-gray-700">{permissionTranslations[permission]}</span>
+                                        </label>
+                                    );
+                                })}
                             </div>
                         </div>
                     ))}
@@ -496,6 +524,7 @@ const UserManagement: React.FC = () => {
             <EditUserModal 
                 isOpen={!!userToEdit}
                 user={userToEdit}
+                roles={state.roles}
                 onClose={() => setUserToEdit(null)}
                 onSuccess={() => refreshUserList()}
             />

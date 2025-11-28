@@ -4,6 +4,7 @@ import { User, Role, Permission, RolePermissions, DataModel, GenericData, ThemeS
 import { INITIAL_ROLE_PERMISSIONS, INITIAL_THEME_SETTINGS, INITIAL_NAVIGATION, INITIAL_ROLES, INITIAL_DATA_MODELS } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
 import { fetchUserListSafe, authenticateUser, fetchPatientData, savePatientData, deletePatientData } from '../services/sheetService';
+import { fetchDataModels, saveDataModels as saveGitHubDataModels } from '../services/githubService';
 
 interface AppState {
     currentUser: User | null;
@@ -124,6 +125,7 @@ const AppContext = createContext<{
     refreshPatientData: () => Promise<void>;
     savePatient: (item: GenericData) => Promise<void>;
     deletePatient: (id: string) => Promise<void>;
+    updateDataModels: (models: DataModel[]) => Promise<void>;
     showToast: (message: string, type?: ToastType) => void;
 }>({
     state: initialState,
@@ -134,12 +136,14 @@ const AppContext = createContext<{
     refreshPatientData: async () => {},
     savePatient: async () => {},
     deletePatient: async () => {},
+    updateDataModels: async () => {},
     showToast: () => {},
 });
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [state, dispatch] = useReducer(appReducer, initialState);
     
+    // Load UI settings
     useEffect(() => {
         const saved = localStorage.getItem('app_ui_settings');
         if (saved) {
@@ -149,6 +153,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 if (parsed.patientListVisibleColumns) dispatch({type: 'SET_PATIENT_LIST_COLUMNS', payload: parsed.patientListVisibleColumns});
             } catch(e) {}
         }
+    }, []);
+
+    // Load Data Models from GitHub on start
+    useEffect(() => {
+        const loadModels = async () => {
+            try {
+                const models = await fetchDataModels();
+                dispatch({ type: 'SET_DATA_MODELS', payload: models });
+            } catch (error) {
+                console.warn("Could not load data models, using default", error);
+            }
+        };
+        loadModels();
     }, []);
 
     useEffect(() => {
@@ -187,7 +204,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     const refreshUserList = async () => {
-        // Allow refresh if admin OR if current user needs to update their own profile view
         try {
             const users = await fetchUserListSafe();
             dispatch({ type: 'SET_USERS', payload: users });
@@ -254,10 +270,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     };
 
+    const updateDataModels = async (models: DataModel[]) => {
+        dispatch({ type: 'SET_DATA_MODELS', payload: models });
+        try {
+            await saveGitHubDataModels(models);
+            showToast('บันทึกโครงสร้างข้อมูลเรียบร้อย', 'success');
+        } catch (error: any) {
+            showToast('บันทึกโครงสร้างไม่สำเร็จ: ' + error.message, 'error');
+        }
+    };
+
     const hasPermission = (permission: Permission): boolean => {
         if (!state.currentUser) return false;
         
         // 🚀 GOD MODE: Admin always has permission, regardless of table settings
+        // This ensures the admin checkbox UI is just visual, not functional blocking
         if (state.currentUser.roleId === 'admin') return true;
 
         const userRoleId = state.currentUser.roleId;
@@ -265,7 +292,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     return (
-        <AppContext.Provider value={{ state, dispatch, hasPermission, login, refreshUserList, refreshPatientData, savePatient, deletePatient, showToast }}>
+        <AppContext.Provider value={{ state, dispatch, hasPermission, login, refreshUserList, refreshPatientData, savePatient, deletePatient, updateDataModels, showToast }}>
             {children}
         </AppContext.Provider>
     );

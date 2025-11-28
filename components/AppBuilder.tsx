@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { DataModel, SchemaField, SchemaFieldType, ThemeSettings, NavigationItem, TargetType, Permission, CustomPage, DashboardWidget, Filter, ChartType, FilterOperator } from '../types';
 import { v4 as uuidv4 } from 'uuid';
-import { PlusIcon, TrashIcon, GripVerticalIcon, EditIcon, CheckIcon, XIcon, FileTextIcon, BarChartIcon, SettingsIcon, UsersIcon } from './Icons';
+import { PlusIcon, TrashIcon, GripVerticalIcon, EditIcon, CheckIcon, XIcon, FileTextIcon, BarChartIcon, SettingsIcon, UsersIcon, SparklesIcon, LockIcon } from './Icons';
 
 type Tab = 'data' | 'pages' | 'nav' | 'appearance' | 'dashboard';
 
@@ -27,7 +27,7 @@ const AppBuilder: React.FC = () => {
 
             <div className="border-b border-gray-300 mb-6">
                 <nav className="flex space-x-1 sm:space-x-4 overflow-x-auto">
-                    <TabButton label="Data Models" isActive={activeTab === 'data'} onClick={() => setActiveTab('data')} />
+                    <TabButton label="Data Models (Form)" isActive={activeTab === 'data'} onClick={() => setActiveTab('data')} />
                     <TabButton label="Pages & Navigation" isActive={activeTab === 'pages'} onClick={() => setActiveTab('pages')} />
                     <TabButton label="Appearance" isActive={activeTab === 'appearance'} onClick={() => setActiveTab('appearance')} />
                     <TabButton label="Dashboard" isActive={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
@@ -44,37 +44,135 @@ const AppBuilder: React.FC = () => {
     );
 };
 
-// Data Model Editor Component
+// --- DATA MODEL EDITOR (REAL FORM BUILDER) ---
 const DataModelEditor: React.FC = () => {
-    const { state, dispatch } = useAppContext();
+    const { state, updateDataModels } = useAppContext();
     const [models, setModels] = useState<DataModel[]>(state.dataModels);
+    const [isSaving, setIsSaving] = useState(false);
 
-    const handleSave = () => {
-        dispatch({ type: 'SET_DATA_MODELS', payload: models });
-        alert('Data Models saved successfully!');
+    // We focus on the 'patients' model for now as it's the core
+    const patientModelIndex = models.findIndex(m => m.id === 'patients');
+    const patientModel = models[patientModelIndex];
+
+    const handleAddField = () => {
+        if (!patientModel) return;
+        const newField: SchemaField = {
+            id: uuidv4(),
+            label: 'New Field',
+            type: SchemaFieldType.TEXT,
+            required: false,
+            isSystem: false
+        };
+        const updatedSchema = [...patientModel.schema, newField];
+        updateModelSchema(updatedSchema);
     };
-    
-    // Placeholder for actual component
+
+    const handleUpdateField = (id: string, updates: Partial<SchemaField>) => {
+        if (!patientModel) return;
+        const updatedSchema = patientModel.schema.map(f => f.id === id ? { ...f, ...updates } : f);
+        updateModelSchema(updatedSchema);
+    };
+
+    const handleDeleteField = (id: string) => {
+        if (!patientModel) return;
+        if (!window.confirm("ลบช่องนี้? ข้อมูลเก่าในช่องนี้อาจหายไป")) return;
+        const updatedSchema = patientModel.schema.filter(f => f.id !== id);
+        updateModelSchema(updatedSchema);
+    };
+
+    const updateModelSchema = (newSchema: SchemaField[]) => {
+        const newModels = [...models];
+        newModels[patientModelIndex] = { ...patientModel, schema: newSchema };
+        setModels(newModels);
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        await updateDataModels(models);
+        setIsSaving(false);
+    };
+
+    if (!patientModel) return <div>Model not found</div>;
+
     return (
         <div className="bg-app-background p-6 rounded-lg border border-app">
-            <h2 className="text-xl font-semibold text-app-text mb-4">Data Models</h2>
-            <p className="text-app-text-muted mb-4">Define the structure of your data, like patients, appointments, or inventory.</p>
-            {/* Simple display for now. A full editor would be complex. */}
-            <div className="space-y-2">
-            {models.map(model => (
-                <div key={model.id} className="p-3 border border-app rounded">
-                    <p className="font-bold">{model.name}</p>
-                    <p className="text-sm text-app-text-muted">{model.schema.length} fields</p>
+            <div className="flex justify-between items-center mb-6">
+                <div>
+                    <h2 className="text-xl font-semibold text-app-text">แบบฟอร์ม: {patientModel.name}</h2>
+                    <p className="text-sm text-app-text-muted">กำหนดหัวข้อที่ต้องการเก็บข้อมูลคนไข้</p>
                 </div>
-            ))}
+                <button onClick={handleSave} disabled={isSaving} className="px-6 py-2 bg-primary text-white rounded-lg shadow hover:bg-primary-dark flex items-center">
+                    {isSaving && <SparklesIcon className="w-4 h-4 mr-2 animate-spin"/>}
+                    บันทึกการเปลี่ยนแปลง
+                </button>
             </div>
-             <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-md mt-4">
-                <strong>Note:</strong> A full visual editor for creating and modifying data models is a complex feature. For now, the "Patients" model is provided and its schema can be modified here. Adding new models would require further development.
-            </p>
-            {/* This is where a full-fledged model builder would go */}
-            <div className="mt-8 text-right">
-                <button onClick={handleSave} className="px-6 py-2 bg-primary text-white rounded-lg shadow hover:bg-primary-dark">Save Data Models</button>
+
+            <div className="space-y-3">
+                {patientModel.schema.map((field, index) => (
+                    <div key={field.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-3 border border-app rounded bg-white shadow-sm">
+                        <div className="text-gray-400 cursor-move hidden sm:block"><GripVerticalIcon className="w-5 h-5"/></div>
+                        
+                        <div className="flex-grow grid grid-cols-1 sm:grid-cols-12 gap-3 w-full">
+                            {/* Label Input */}
+                            <div className="sm:col-span-5">
+                                <label className="text-xs text-gray-500 block sm:hidden">ชื่อหัวข้อ</label>
+                                <input 
+                                    type="text" 
+                                    value={field.label} 
+                                    onChange={e => handleUpdateField(field.id, { label: e.target.value })}
+                                    className="w-full p-2 border border-gray-300 rounded focus:border-primary focus:ring-1 focus:ring-primary"
+                                    placeholder="ชื่อหัวข้อ (เช่น อายุ, อาการ)"
+                                />
+                            </div>
+
+                            {/* Type Select */}
+                            <div className="sm:col-span-4">
+                                <label className="text-xs text-gray-500 block sm:hidden">ประเภทข้อมูล</label>
+                                <select 
+                                    value={field.type} 
+                                    onChange={e => handleUpdateField(field.id, { type: e.target.value as SchemaFieldType })}
+                                    disabled={field.isSystem}
+                                    className="w-full p-2 border border-gray-300 rounded bg-white focus:border-primary"
+                                >
+                                    <option value={SchemaFieldType.TEXT}>ข้อความสั้น (Text)</option>
+                                    <option value={SchemaFieldType.TEXTAREA}>ข้อความยาว (TextArea)</option>
+                                    <option value={SchemaFieldType.NUMBER}>ตัวเลข (Number)</option>
+                                    <option value={SchemaFieldType.DATE}>วันที่ (Date)</option>
+                                    <option value={SchemaFieldType.GPS}>พิกัด GPS</option>
+                                </select>
+                            </div>
+
+                            {/* Required Checkbox */}
+                            <div className="sm:col-span-3 flex items-center">
+                                <label className="flex items-center cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={field.required} 
+                                        onChange={e => handleUpdateField(field.id, { required: e.target.checked })}
+                                        className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                                    />
+                                    <span className="ml-2 text-sm text-gray-700">จำเป็นต้องกรอก</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex-shrink-0 ml-auto">
+                            {field.isSystem ? (
+                                <LockIcon className="w-5 h-5 text-gray-400" title="System Field"/>
+                            ) : (
+                                <button onClick={() => handleDeleteField(field.id)} className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded">
+                                    <TrashIcon className="w-5 h-5"/>
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                ))}
             </div>
+
+            <button onClick={handleAddField} className="mt-4 w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary hover:text-primary transition-colors flex justify-center items-center font-medium">
+                <PlusIcon className="w-5 h-5 mr-2"/> เพิ่มหัวข้อใหม่
+            </button>
         </div>
     );
 };

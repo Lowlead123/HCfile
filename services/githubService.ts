@@ -1,6 +1,7 @@
 
 import { GITHUB_CONFIG } from './githubConfig';
-import { User, GenericData } from '../types';
+import { User, GenericData, DataModel } from '../types';
+import { INITIAL_DATA_MODELS } from '../constants';
 
 const BASE_URL = `https://api.github.com/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}`;
 
@@ -126,19 +127,11 @@ async function deleteFile(path: string, message: string, sha: string) {
 const DELETED_DIR = 'deleted_log';
 
 async function createDeletionTombstone(id: string) {
-    // Strategy: Create a file named after the ID.
-    // This avoids the concurrency issues of updating a single 'deleted_ids.json' file.
     const path = `${DELETED_DIR}/${id}`;
-    
-    // Check if it already exists to avoid unnecessary writes (though PUT handles updates fine)
     const existing = await getFileContent(path);
-    
     await saveFileContent(
         path, 
-        { 
-            deletedAt: new Date().toISOString(),
-            id: id 
-        }, 
+        { deletedAt: new Date().toISOString(), id: id }, 
         `Mark deleted: ${id}`, 
         existing?.sha
     );
@@ -147,17 +140,12 @@ async function createDeletionTombstone(id: string) {
 async function getDeletedTombstones(): Promise<Set<string>> {
     try {
         const response = await githubRequest(`/contents/${DELETED_DIR}?ref=${GITHUB_CONFIG.BRANCH}`);
-        if (response.status === 404) return new Set(); // Folder doesn't exist yet, no deletions
-        
+        if (response.status === 404) return new Set();
         if (!response.ok) return new Set();
-        
         const files = await response.json();
         if (!Array.isArray(files)) return new Set();
-        
-        // The file name IS the ID
         return new Set(files.map((f: any) => f.name));
     } catch (e) {
-        console.warn("Could not fetch deletion logs", e);
         return new Set();
     }
 }
@@ -214,7 +202,6 @@ export const updateGitHubUserDetails = async (username: string, details: Partial
     const index = users.findIndex(u => u.username === username);
     if (index === -1) throw new Error("User not found");
     
-    // Update fields
     if (details.displayName) users[index].displayName = details.displayName;
     if (details.phoneNumber) users[index].phoneNumber = details.phoneNumber;
     if (details.passwordHash) users[index].passwordHash = details.passwordHash;
@@ -230,28 +217,37 @@ export const deleteGitHubUser = async (username: string): Promise<void> => {
     await saveFileContent(USERS_PATH, newUsers, `Delete user ${username}`, file.sha);
 };
 
+// --- DATA MODELS (SCHEMA) ---
+const MODELS_PATH = 'system/datamodels.json';
+
+export const fetchDataModels = async (): Promise<DataModel[]> => {
+    const file = await getFileContent(MODELS_PATH);
+    if (!file) return INITIAL_DATA_MODELS; // Default fallback
+    return file.content;
+}
+
+export const saveDataModels = async (models: DataModel[]): Promise<void> => {
+    const existing = await getFileContent(MODELS_PATH);
+    await saveFileContent(MODELS_PATH, models, 'Update data models', existing?.sha);
+}
+
 // --- PATIENTS Service ---
 
 const PATIENTS_DIR = 'patients';
 
 export const fetchGitHubPatients = async (): Promise<GenericData[]> => {
-    // 1. Fetch Online Tombstones (The Truth)
     const deletedSet = await getDeletedTombstones();
-
-    // 2. Fetch Files List
     const response = await githubRequest(`/contents/${PATIENTS_DIR}?ref=${GITHUB_CONFIG.BRANCH}`);
     if (response.status === 404) return [];
     
     const files = await response.json();
     if (!Array.isArray(files)) return [];
 
-    // 3. Filter out files that have a tombstone in `deleted_log/`
     const validFiles = files.filter((f: any) => {
         const id = f.name.replace('.json', '');
         return f.name.endsWith('.json') && !deletedSet.has(id);
     });
 
-    // 4. Fetch Content
     const promises = validFiles.map(async (f: any) => {
          try {
             const fileData = await getFileContent(`${PATIENTS_DIR}/${f.name}`);
@@ -263,18 +259,12 @@ export const fetchGitHubPatients = async (): Promise<GenericData[]> => {
 
     const results = await Promise.all(promises);
     
-    // 5. Strict Validation (Prevent Empty Frames)
     return results.filter((item): item is GenericData => {
         if (!item) return false;
         if (typeof item !== 'object') return false;
         if (typeof item.id !== 'string') return false;
-        
-        // Double check against tombstone
         if (deletedSet.has(item.id)) return false;
-        
-        // Fix for "Empty Frame": Ensure values object exists and has keys
         if (!item.values || Object.keys(item.values).length === 0) return false;
-
         return true;
     });
 };
@@ -286,16 +276,9 @@ export const saveGitHubPatient = async (item: GenericData): Promise<void> => {
 };
 
 export const deleteGitHubPatient = async (id: string): Promise<void> => {
-    // 1. Create Tombstone FIRST (Online Memory)
-    // Creating a file is idempotent and conflict-free unlike editing a list.
-    // Once this file exists, fetchGitHubPatients will IGNORE the patient, 
-    // even if the actual patient file deletion fails or is slow.
     await createDeletionTombstone(id);
-
-    // 2. Delete the actual file
     const fileName = `${PATIENTS_DIR}/${id}.json`;
     const existingFile = await getFileContent(fileName);
-    
     if (existingFile) {
         await deleteFile(fileName, `Delete patient ${id}`, existingFile.sha);
     }
