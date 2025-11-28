@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Copy of HC-Patient-Manager",
+  "description": "An online data collection application for home care patient visits. It features dynamic form creation, role-based access control, and easy data management for healthcare professionals.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
