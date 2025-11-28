@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { Permission, GenericData, DataModel } from '../types';
@@ -28,6 +29,9 @@ const PatientList: React.FC = () => {
     const filteredPatients = useMemo(() => {
         if (!patientModel) return [];
         return patientData.filter(p => {
+            // 🔥 Defensive Check: Prevent empty frames/rows
+            if (!p || !p.values || Object.keys(p.values).length === 0) return false;
+
             const name = p.values[patientModel.nameFieldId] || '';
             const hnField = patientModel.schema.find(f => f.label.toLowerCase() === 'hn');
             const hn = hnField ? (p.values[hnField.id] || '') : '';

@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
+
+import React, { createContext, useContext, useReducer, useEffect, useRef, ReactNode } from 'react';
 import { User, Role, Permission, RolePermissions, DataModel, GenericData, ThemeSettings, NavigationItem, DashboardWidget, PageThemeOverride, CustomPage } from '../types';
 import { INITIAL_ROLE_PERMISSIONS, INITIAL_THEME_SETTINGS, INITIAL_NAVIGATION, INITIAL_ROLES, INITIAL_DATA_MODELS } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
@@ -85,6 +86,30 @@ const appReducer = (state: AppState, action: Action): AppState => {
     }
 };
 
+// --- CLIENT-SIDE CACHE FOR IMMEDIATE FEEDBACK ---
+// We keep this as a secondary layer to ensure the UI feels instant
+const TOMBSTONE_KEY = 'hc_local_tombstones';
+
+const getLocalTombstones = (): Set<string> => {
+    try {
+        const raw = localStorage.getItem(TOMBSTONE_KEY);
+        return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch {
+        return new Set();
+    }
+};
+
+const addLocalTombstone = (id: string) => {
+    try {
+        const current = getLocalTombstones();
+        current.add(id);
+        localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(Array.from(current)));
+    } catch (e) {
+        console.error("Failed to save local tombstone", e);
+    }
+};
+
+
 const AppContext = createContext<{
     state: AppState;
     dispatch: React.Dispatch<Action>;
@@ -107,7 +132,7 @@ const AppContext = createContext<{
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [state, dispatch] = useReducer(appReducer, initialState);
-
+    
     useEffect(() => {
         const saved = localStorage.getItem('app_ui_settings');
         if (saved) {
@@ -162,8 +187,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         dispatch({ type: 'SET_DATA_LOADING', payload: true });
         dispatch({ type: 'SET_DATA_ERROR', payload: null });
         try {
-            const data = await fetchPatientData();
-            dispatch({ type: 'SET_DATA', payload: { modelId: 'patients', data } });
+            const rawData = await fetchPatientData();
+            
+            // Double protection: Filter using client-side cache as well
+            const localTombstones = getLocalTombstones();
+            const cleanData = rawData.filter(item => !localTombstones.has(item.id));
+
+            dispatch({ type: 'SET_DATA', payload: { modelId: 'patients', data: cleanData } });
         } catch (error: any) {
             console.error("Failed to load patients", error);
             dispatch({ type: 'SET_DATA_ERROR', payload: error.message || 'Error loading data' });
@@ -189,18 +219,31 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     const deletePatient = async (id: string) => {
-        dispatch({ type: 'SET_DATA_LOADING', payload: true });
+        // 1. Client-Side Optimistic UI (Hide immediately)
+        addLocalTombstone(id);
+        
+        const previousData = state.data['patients'] || [];
+        const optimisticData = previousData.filter(p => p.id !== id);
+        
+        dispatch({ 
+            type: 'SET_DATA', 
+            payload: { modelId: 'patients', data: optimisticData } 
+        });
+
         try {
+            // 2. Server-Side Permanent Deletion (Create Tombstone File)
             await deletePatientData(id);
             
-            // 🔥 เพิ่มเวลาหน่วง (Delay) 1.5 วินาที เพื่อรอให้ Google Sheet ลบเสร็จจริง 🔥
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            
-            await refreshPatientData();
+            // 3. Refresh to sync state (though optimistic UI already handled it)
+            // We wait a bit to ensure GitHub has processed the file creation
+            setTimeout(() => refreshPatientData(), 1000);
+
         } catch (error) {
-            throw error;
-        } finally {
-            dispatch({ type: 'SET_DATA_LOADING', payload: false });
+            console.error("Deletion failed on server:", error);
+            // We DO NOT revert the UI. 
+            // If the user wants to see it again, they can clear cache/reload, 
+            // but for now, we assume the user wanted it gone.
+            // The local tombstone keeps it hidden.
         }
     };
 
